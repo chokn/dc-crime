@@ -1,0 +1,121 @@
+---
+title: "DC Crimes time series forecast"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+Based on [Forecasting Chicago Crime Numbers (2017-2021) on Kaggle](https://www.kaggle.com/umeshnarayanappa/d/currie32/crimes-in-chicago/forecasting-chicago-crimes-2017-2020)
+
+# Preparation  
+Load some packges
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(prophet)
+library(lubridate)
+```
+
+
+## Load the data
+Right now it's four years of Crimes in the Washington DC area. 
+```{r}
+crime.data <- read_csv("data/dc-crime20150101-20170328.csv")
+crime.data <- crime.data %>% bind_rows(read_csv("data/dc-crime20130101-20141231.csv"))
+
+```
+
+## Some cleaning and converting
+
+Convert character dates to datetime
+
+```{r}
+crime.data$REPORT_DAT <- mdy_hms( crime.data$REPORT_DAT)
+crime.data$START_DATE <- mdy_hms(crime.data$START_DATE)
+crime.data$END_DATE <- mdy_hms(crime.data$END_DATE)
+
+```
+
+Get rid of reports that started a long time before the report date  
+```{r}
+crime.data <- crime.data %>% filter(START_DATE >= ymd("2013-01-01"))
+
+
+```
+
+## Grouping by day, month, year  
+
+```{r}
+crime.data$REPORT_DAY <- date(crime.data$REPORT_DAT)
+crime.data$START_DAY <- date(crime.data$START_DATE) 
+crime.data$END_DAY <- date(crime.data$END_DATE)
+crime.data$START_MONTH <- floor_date(crime.data$START_DATE, unit="month")
+crime.data$START_WEEK <- floor_date(crime.data$START_DATE, unit="week")
+
+
+
+crimes.by.day <- crime.data %>% group_by(START_DAY) %>% summarise(TOTAL=n())
+crimes.by.week <- crime.data %>% group_by(START_WEEK) %>% summarise(TOTAL=n())
+crimes.by.month <- crime.data %>% group_by(START_MONTH) %>% summarise(TOTAL=n())
+
+
+```
+
+Just for fun, let's plot the crimes by day
+```{r}
+ggplot(data=crimes.by.day, aes(x=START_DAY, y=TOTAL)) +geom_line()
+ggplot(data=crimes.by.week, aes(x=START_WEEK, y=TOTAL)) +geom_line()
+ggplot(data=crimes.by.month, aes(x=START_MONTH, y=TOTAL)) +geom_line()
+
+
+```
+
+You see a seasonal pattern, but nothing too crazy. 
+
+# Modeling with prophet  
+
+## Set up the data frame for modeling  
+The prophet package expects the date column to be named "ds" and the observation column "y"  
+```{r}
+colnames(crimes.by.day)[1:2] <- c("ds","y")
+
+```
+
+## Train the model  
+```{r}
+model <- prophet(crimes.by.day)
+```
+
+
+
+### Predict  
+
+Make a blank data frame of future dates, one year out
+```{r}
+future <- make_future_dataframe(model, periods=365)
+tail(future)
+```
+
+Make a forecast
+```{r}
+crime.forecast <- predict(model,future)
+tail(crime.forecast[c('ds','yhat','yhat_lower', 'yhat_upper')])
+```
+
+plot the forecast
+```{r}
+plot(model, crime.forecast)
+prophet_plot_components(model, crime.forecast)
+```
+
+* Overall trend is going down  
+* Peaks on Friday and Saturday  
+* Seasonality, probably due to weather  
+
+
+### Write out to csv
+```{r}
+write_csv(crime.forecast, "data/crime_forecast_output.csv")
+
+```
+
